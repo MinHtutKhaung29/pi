@@ -4,17 +4,20 @@ import { randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
+	copyFileSync,
 	createReadStream,
 	existsSync,
+	constants as fsConstants,
 	mkdirSync,
 	openSync,
 	readdirSync,
 	readSync,
+	rmSync,
 	statSync,
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
-import { join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -41,6 +44,12 @@ export interface SessionHeader {
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
+}
+
+export interface PreparedCwdRelocation {
+	sessionManager: SessionManager;
+	commit(): void;
+	rollback(): void;
 }
 
 export interface SessionEntryBase {
@@ -1011,6 +1020,77 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	prepareCwdRelocation(targetCwd: string): PreparedCwdRelocation {
+		const resolvedTargetCwd = resolvePath(targetCwd, this.cwd);
+		if (resolvedTargetCwd === this.cwd) {
+			return { sessionManager: this, commit() {}, rollback() {} };
+		}
+
+		const relocatedEntries = this.fileEntries.map((entry) =>
+			entry.type === "session" ? { ...entry, cwd: resolvedTargetCwd } : entry,
+		);
+
+		if (!this.persist) {
+			const sessionManager = new SessionManager(resolvedTargetCwd, "", undefined, false);
+			sessionManager.sessionId = this.sessionId;
+			sessionManager.fileEntries = relocatedEntries;
+			sessionManager._buildIndex();
+			sessionManager.flushed = this.flushed;
+			return { sessionManager, commit() {}, rollback() {} };
+		}
+
+		if (!this.sessionFile) {
+			throw new Error("Persisted session is missing a session file");
+		}
+
+		const sourceSessionFile = this.sessionFile;
+		const sourceUsesDefaultDir = this.usesDefaultSessionDir();
+		const targetSessionDir = sourceUsesDefaultDir ? getDefaultSessionDir(resolvedTargetCwd) : this.sessionDir;
+		mkdirSync(targetSessionDir, { recursive: true });
+		const targetSessionFile = sourceUsesDefaultDir
+			? join(targetSessionDir, basename(sourceSessionFile))
+			: join(
+					targetSessionDir,
+					`${new Date().toISOString().replace(/[:.]/g, "-")}_${this.sessionId}_${randomUUID()}.jsonl`,
+				);
+		if (existsSync(targetSessionFile)) {
+			throw new Error(`Session relocation destination already exists: ${targetSessionFile}`);
+		}
+
+		const temporaryFile = join(targetSessionDir, `.${basename(targetSessionFile)}.${randomUUID()}.tmp`);
+		try {
+			writeFileSync(temporaryFile, `${relocatedEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, {
+				flag: "wx",
+			});
+			copyFileSync(temporaryFile, targetSessionFile, fsConstants.COPYFILE_EXCL);
+		} finally {
+			rmSync(temporaryFile, { force: true });
+		}
+
+		const sessionManager = new SessionManager(
+			resolvedTargetCwd,
+			targetSessionDir,
+			targetSessionFile,
+			true,
+			undefined,
+			relocatedEntries,
+		);
+		let completed = false;
+		return {
+			sessionManager,
+			commit: () => {
+				if (completed) return;
+				completed = true;
+				if (sourceSessionFile !== targetSessionFile) rmSync(sourceSessionFile, { force: true });
+			},
+			rollback: () => {
+				if (completed) return;
+				completed = true;
+				rmSync(targetSessionFile, { force: true });
+			},
+		};
 	}
 
 	_persist(entry: SessionEntry): void {
