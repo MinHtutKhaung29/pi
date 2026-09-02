@@ -293,9 +293,15 @@ describe("AgentSessionRuntime characterization", () => {
 	it("changes cwd while preserving the active session identity and history", async () => {
 		const events: RecordedSessionEvent[] = [];
 		const { runtime, tempDir } = await createRuntimeForTest((pi: ExtensionAPI) => {
-			pi.on("session_before_switch", (event) => events.push(event));
-			pi.on("session_shutdown", (event) => events.push(event));
-			pi.on("session_start", (event) => events.push(event));
+			pi.on("session_before_switch", (event) => {
+				events.push(event);
+			});
+			pi.on("session_shutdown", (event) => {
+				events.push(event);
+			});
+			pi.on("session_start", (event) => {
+				events.push(event);
+			});
 		});
 		await runtime.session.prompt("hello");
 		const sourceSession = runtime.session;

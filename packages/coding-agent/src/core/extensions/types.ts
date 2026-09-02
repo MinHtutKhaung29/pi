@@ -565,7 +565,7 @@ export interface SessionStartEvent {
 	type: "session_start";
 	/** Why this session start happened. */
 	reason: "startup" | "reload" | "new" | "resume" | "fork" | "cwd";
-	/** Previously active session file. Present for "new", "resume", and "fork". */
+	/** Previously active session file. Present for "new", "resume", "fork", and "cwd". */
 	previousSessionFile?: string;
 }
 
