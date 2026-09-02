@@ -19,11 +19,14 @@ Use `/session` in interactive mode to see the current session file, session ID, 
 
 For the JSONL file format and SessionManager API, see [Session Format](session-format.md).
 
+When `/cd` changes the project directory, Pi preserves the current session ID, conversation tree, labels, and name. Sessions using default storage move to the target project's session folder after the new runtime starts successfully. Sessions using `--session-dir` remain in that explicit directory.
+
 ## Session Commands
 
 | Command | Description |
 |---------|-------------|
 | `/resume` | Browse and select previous sessions |
+| `/cd <directory>` | Move this session to another project directory |
 | `/new` | Start a new session |
 | `/name <name>` | Set the current session display name |
 | `/session` | Show session info |

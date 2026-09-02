@@ -42,6 +42,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/thinking` | Switch thinking level; Ctrl+S in the picker saves the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Theme, message delivery, transport, and other preferences |
+| `/cd <directory>` | Change the primary project directory while keeping the current conversation |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -59,6 +60,14 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
 | `/quit` | Quit pi |
+
+### Changing Project Directory
+
+Use `/cd <directory>` to move the current conversation to another project without restarting Pi. Relative paths resolve from the current project directory, and paths containing spaces may be quoted.
+
+Pi keeps the session ID and history, changes every built-in tool to the new directory, reevaluates project trust, and reloads project settings, context files, extensions, prompts, skills, and themes. Default session storage moves to the new project's session folder; an explicit `--session-dir` remains unchanged.
+
+`/cd` changes the primary project. It is different from passing absolute resource paths, which adds resources without changing tool or Git roots.
 
 ## Message Queue
 

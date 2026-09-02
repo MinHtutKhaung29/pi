@@ -1,7 +1,7 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BUILTIN_SLASH_COMMANDS } from "../src/core/slash-commands.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
@@ -26,6 +26,11 @@ type InteractiveModePrototype = {
 };
 
 const prototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+	for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe("InteractiveMode /cd", () => {
 	it("advertises the built-in command", () => {
@@ -54,10 +59,15 @@ describe("InteractiveMode /cd", () => {
 
 	it("waits for idle and switches to the canonical directory with target trust", async () => {
 		const source = join(tmpdir(), `pi-cd-source-${Date.now()}`);
+		temporaryRoots.push(source);
 		const target = join(source, "target");
 		mkdirSync(target, { recursive: true });
 		const waitForIdle = vi.fn(async () => {});
-		const changeCwd = vi.fn(async () => ({ cancelled: false }));
+		const changeCwd = vi.fn(
+			async (_targetCwd: string, _options: { projectTrustContextFactory: (cwd: string) => unknown }) => ({
+				cancelled: false,
+			}),
+		);
 		const createProjectTrustContext = vi.fn((cwd: string) => ({ cwd }));
 		const showStatus = vi.fn();
 		const showError = vi.fn();
@@ -86,9 +96,14 @@ describe("InteractiveMode /cd", () => {
 
 	it("rejects files without invoking the runtime", async () => {
 		const source = join(tmpdir(), `pi-cd-file-${Date.now()}`);
+		temporaryRoots.push(source);
 		mkdirSync(source, { recursive: true });
 		writeFileSync(join(source, "file.txt"), "content");
-		const changeCwd = vi.fn(async () => ({ cancelled: false }));
+		const changeCwd = vi.fn(
+			async (_targetCwd: string, _options: { projectTrustContextFactory: (cwd: string) => unknown }) => ({
+				cancelled: false,
+			}),
+		);
 		const showError = vi.fn();
 		const context: CdCommandContext = {
 			sessionManager: { getCwd: () => source },
