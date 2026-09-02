@@ -106,7 +106,7 @@ import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
-import { getCwdRelativePath } from "../../utils/paths.ts";
+import { getCwdRelativePath, resolvePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
@@ -2984,6 +2984,11 @@ export class InteractiveMode {
 			if (text === "/settings") {
 				this.showSettingsSelector();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/cd" || text.startsWith("/cd ")) {
+				this.editor.setText("");
+				await this.handleCdCommand(text);
 				return;
 			}
 			if (text === "/scoped-models") {
@@ -6009,6 +6014,56 @@ export class InteractiveMode {
 				dismissReloadBox(previousEditor as Component);
 			}
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	private getCdCommandArgument(text: string): string | undefined {
+		if (!text.startsWith("/cd ")) return undefined;
+		const value = text.slice(4).trim();
+		if (!value) return undefined;
+		const first = value[0];
+		if (first !== '"' && first !== "'") return value;
+		if (value.at(-1) !== first) return undefined;
+		return value.slice(1, -1);
+	}
+
+	private async handleCdCommand(text: string): Promise<void> {
+		const inputPath = this.getCdCommandArgument(text);
+		if (!inputPath) {
+			this.showError("Usage: /cd <directory>");
+			return;
+		}
+
+		let targetCwd: string;
+		try {
+			const resolvedTarget = resolvePath(inputPath, this.sessionManager.getCwd(), { trim: true });
+			if (!fs.statSync(resolvedTarget).isDirectory()) {
+				this.showError(`Failed to change directory: not a directory: ${resolvedTarget}`);
+				return;
+			}
+			targetCwd = fs.realpathSync(resolvedTarget);
+		} catch (error) {
+			this.showError(`Failed to change directory: ${error instanceof Error ? error.message : String(error)}`);
+			return;
+		}
+
+		if (targetCwd === fs.realpathSync(this.sessionManager.getCwd())) {
+			this.showStatus(`Already in directory: ${targetCwd}`);
+			return;
+		}
+
+		await this.session.waitForIdle();
+		try {
+			const result = await this.runtimeHost.changeCwd(targetCwd, {
+				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
+			});
+			if (result.cancelled) {
+				this.showStatus("Directory change cancelled");
+				return;
+			}
+			this.showStatus(`Changed directory to: ${targetCwd}`);
+		} catch (error) {
+			await this.handleFatalRuntimeError("Failed to change directory", error);
 		}
 	}
 
