@@ -131,7 +131,7 @@ export class AgentSessionRuntime {
 	}
 
 	private async emitBeforeSwitch(
-		reason: "new" | "resume",
+		reason: "new" | "resume" | "cwd",
 		targetSessionFile?: string,
 	): Promise<{ cancelled: boolean }> {
 		const runner = this.session.extensionRunner;
@@ -219,6 +219,42 @@ export class AgentSessionRuntime {
 				projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
 			}),
 		);
+		await this.finishSessionReplacement(options?.withSession);
+		return { cancelled: false };
+	}
+
+	async changeCwd(
+		targetCwd: string,
+		options?: {
+			withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
+			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
+		},
+	): Promise<{ cancelled: boolean }> {
+		const resolvedTargetCwd = resolvePath(targetCwd, this.cwd);
+		if (resolvedTargetCwd === this.cwd) {
+			return { cancelled: false };
+		}
+
+		const previousSessionFile = this.session.sessionFile;
+		const relocation = this.session.sessionManager.prepareCwdRelocation(resolvedTargetCwd);
+		const targetSessionFile = relocation.sessionManager.getSessionFile();
+		const beforeResult = await this.emitBeforeSwitch("cwd", targetSessionFile);
+		if (beforeResult.cancelled) {
+			relocation.rollback();
+			return beforeResult;
+		}
+
+		await this.teardownCurrent("cwd", targetSessionFile);
+		this.apply(
+			await this.createRuntime({
+				cwd: resolvedTargetCwd,
+				agentDir: this.services.agentDir,
+				sessionManager: relocation.sessionManager,
+				sessionStartEvent: { type: "session_start", reason: "cwd", previousSessionFile },
+				projectTrustContext: options?.projectTrustContextFactory?.(resolvedTargetCwd),
+			}),
+		);
+		relocation.commit();
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
 	}

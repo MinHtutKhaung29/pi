@@ -290,10 +290,44 @@ describe("AgentSessionRuntime characterization", () => {
 		]);
 	});
 
-	it("honors session_before_switch cancellation for new and resume", async () => {
+	it("changes cwd while preserving the active session identity and history", async () => {
 		const events: RecordedSessionEvent[] = [];
-		let cancelReason: "new" | "resume" | undefined;
-		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
+		const { runtime, tempDir } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_before_switch", (event) => events.push(event));
+			pi.on("session_shutdown", (event) => events.push(event));
+			pi.on("session_start", (event) => events.push(event));
+		});
+		await runtime.session.prompt("hello");
+		const sourceSession = runtime.session;
+		const sourceSettings = runtime.services.settingsManager;
+		const sourceFile = runtime.session.sessionFile!;
+		const sessionId = runtime.session.sessionManager.getSessionId();
+		const entries = runtime.session.sessionManager.getEntries();
+		const targetCwd = join(tempDir, "target");
+		mkdirSync(targetCwd);
+		events.length = 0;
+
+		const result = await runtime.changeCwd(targetCwd);
+		await runtime.session.bindExtensions({});
+
+		expect(result.cancelled).toBe(false);
+		expect(runtime.cwd).toBe(realpathSync(targetCwd));
+		expect(runtime.session).not.toBe(sourceSession);
+		expect(runtime.services.settingsManager).not.toBe(sourceSettings);
+		expect(runtime.session.sessionManager.getSessionId()).toBe(sessionId);
+		expect(runtime.session.sessionManager.getEntries()).toEqual(entries);
+		expect(existsSync(sourceFile)).toBe(false);
+		expect(events).toEqual([
+			{ type: "session_before_switch", reason: "cwd", targetSessionFile: runtime.session.sessionFile },
+			{ type: "session_shutdown", reason: "cwd", targetSessionFile: runtime.session.sessionFile },
+			{ type: "session_start", reason: "cwd", previousSessionFile: sourceFile },
+		]);
+	});
+
+	it("honors session_before_switch cancellation for new, resume, and cwd", async () => {
+		const events: RecordedSessionEvent[] = [];
+		let cancelReason: "new" | "resume" | "cwd" | undefined;
+		const { runtime, tempDir } = await createRuntimeForTest((pi: ExtensionAPI) => {
 			pi.on("session_before_switch", (event) => {
 				events.push(event);
 				if (event.reason === cancelReason) {
@@ -322,6 +356,14 @@ describe("AgentSessionRuntime characterization", () => {
 		cancelReason = "resume";
 		const resumeResult = await runtime.switchSession(otherSessionFile!);
 		expect(resumeResult.cancelled).toBe(true);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+
+		const targetCwd = join(tempDir, "cancelled-target");
+		mkdirSync(targetCwd);
+		cancelReason = "cwd";
+		const cwdResult = await runtime.changeCwd(targetCwd);
+		expect(cwdResult.cancelled).toBe(true);
+		expect(runtime.cwd).toBe(tempDir);
 		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 	});
 
