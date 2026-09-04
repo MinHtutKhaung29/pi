@@ -253,7 +253,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
-	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
+	const hasModelInvocableSkills = resourceLoader.getSkills().skills.some((skill) => !skill.disableModelInvocation);
+	const defaultActiveToolNames: ToolName[] = hasModelInvocableSkills
+		? ["read", "bash", "edit", "write", "skill-search"]
+		: ["read", "bash", "edit", "write"];
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;
