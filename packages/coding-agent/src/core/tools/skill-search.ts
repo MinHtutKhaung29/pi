@@ -17,25 +17,51 @@ export interface SkillHit {
 	tags: string[];
 }
 
+const CJK_REGEX = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+function isCjk(text: string): boolean {
+	return CJK_REGEX.test(text);
+}
+
+function normalizeText(text: string): string {
+	return text.normalize("NFKC").toLowerCase();
+}
+
 function tokenize(text: string): string[] {
-	return text
-		.toLowerCase()
-		.split(/[^a-z0-9]+/)
+	return normalizeText(text)
+		.split(/[^\p{L}\p{N}]+/u)
 		.filter(Boolean);
 }
 
+function compareCodePoints(a: string, b: string): number {
+	const normA = a.normalize("NFC");
+	const normB = b.normalize("NFC");
+	if (normA === normB) return 0;
+	const charsA = Array.from(normA);
+	const charsB = Array.from(normB);
+	const len = Math.min(charsA.length, charsB.length);
+	for (let i = 0; i < len; i++) {
+		const cpA = charsA[i].codePointAt(0)!;
+		const cpB = charsB[i].codePointAt(0)!;
+		if (cpA !== cpB) {
+			return cpA < cpB ? -1 : 1;
+		}
+	}
+	return charsA.length - charsB.length;
+}
+
 export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHit[] {
-	const tag = (opts.tag ?? "").trim().toLowerCase();
-	const query = (opts.query ?? "").trim().toLowerCase();
+	const tag = normalizeText(opts.tag ?? "").trim();
+	const query = normalizeText(opts.query ?? "").trim();
 	const limit = Math.min(Math.max(opts.limit ?? 5, 1), 10);
 
 	let pool = skills.filter((s) => !s.disableModelInvocation);
-	if (tag) pool = pool.filter((s) => s.tags.includes(tag));
+	if (tag) pool = pool.filter((s) => s.tags.some((t) => normalizeText(t) === tag));
 
 	if (!query) {
 		return pool
 			.slice()
-			.sort((a, b) => a.name.localeCompare(b.name))
+			.sort((a, b) => compareCodePoints(a.name, b.name))
 			.slice(0, limit)
 			.map((s) => ({ name: s.name, description: s.description, filePath: s.filePath, tags: s.tags }));
 	}
@@ -52,25 +78,41 @@ export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHi
 	}> = [];
 
 	for (const s of pool) {
-		const exactName = s.name.toLowerCase() === query ? 1 : 0;
-		const exactTag = s.tags.some((t) => t.toLowerCase() === query) ? 1 : 0;
+		const normalizedName = normalizeText(s.name);
+		const normalizedTags = s.tags.map((t) => normalizeText(t));
+		const normalizedDesc = normalizeText(s.description);
+
+		const exactName = normalizedName === query ? 1 : 0;
+		const exactTag = normalizedTags.some((t) => t === query) ? 1 : 0;
 
 		const tagTokens = new Set(s.tags.flatMap((t) => tokenize(t)));
 		let tagTokenMatches = 0;
 		for (const q of queryTokens) {
-			if (tagTokens.has(q)) tagTokenMatches++;
+			if (
+				tagTokens.has(q) ||
+				normalizedTags.some((t) => (isCjk(q) || isCjk(t)) && (t.includes(q) || q.includes(t)))
+			) {
+				tagTokenMatches++;
+			}
 		}
 
 		const nameTokens = new Set(tokenize(s.name));
 		let nameTokenMatches = 0;
 		for (const q of queryTokens) {
-			if (nameTokens.has(q)) nameTokenMatches++;
+			if (
+				nameTokens.has(q) ||
+				((isCjk(q) || isCjk(normalizedName)) && (normalizedName.includes(q) || q.includes(normalizedName)))
+			) {
+				nameTokenMatches++;
+			}
 		}
 
 		const descTokens = new Set(tokenize(s.description));
 		let descTokenMatches = 0;
 		for (const q of queryTokens) {
-			if (descTokens.has(q)) descTokenMatches++;
+			if (descTokens.has(q) || ((isCjk(q) || isCjk(normalizedDesc)) && normalizedDesc.includes(q))) {
+				descTokenMatches++;
+			}
 		}
 
 		if (!exactName && !exactTag && tagTokenMatches === 0 && nameTokenMatches === 0 && descTokenMatches === 0) {
@@ -93,7 +135,7 @@ export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHi
 		if (b.tagTokenMatches !== a.tagTokenMatches) return b.tagTokenMatches - a.tagTokenMatches;
 		if (b.nameTokenMatches !== a.nameTokenMatches) return b.nameTokenMatches - a.nameTokenMatches;
 		if (b.descTokenMatches !== a.descTokenMatches) return b.descTokenMatches - a.descTokenMatches;
-		return a.skill.name.localeCompare(b.skill.name);
+		return compareCodePoints(a.skill.name, b.skill.name);
 	});
 
 	return scored

@@ -131,6 +131,68 @@ describe("searchSkills", () => {
 
 		expect(hits.map((h) => h.name)).toEqual(["custom-utility", "fill-pdf-tool", "unrelated-tool"]);
 	});
+
+	it("discovers skills with non-Latin Chinese descriptions via unsegmented CJK substring fallback", () => {
+		const sChinese = makeSkill({
+			name: "form-processor",
+			description: "用于处理数据表单并自动填写内容的技能",
+		});
+		const sOther = makeSkill({
+			name: "unrelated",
+			description: "completely unrelated tool",
+		});
+
+		const hits = searchSkills([sChinese, sOther], { query: "填写内容" });
+		expect(hits.map((h) => h.name)).toEqual(["form-processor"]);
+	});
+
+	it("matches Chinese query across tags, names, and descriptions with proper ranking tiers", () => {
+		const sDesc = makeSkill({ name: "helper", description: "用于数据分析和报表生成" });
+		const sName = makeSkill({ name: "数据分析-tool", description: "无关描述" });
+		const sTag = makeSkill({ name: "other-tool", tags: ["数据分析"], description: "无关描述" });
+		const sExact = makeSkill({ name: "数据分析", description: "无关描述" });
+
+		const hits = searchSkills([sDesc, sName, sTag, sExact], { query: "数据分析" });
+		expect(hits.map((h) => h.name)).toEqual(["数据分析", "other-tool", "数据分析-tool", "helper"]);
+	});
+
+	it("breaks ties deterministically using Unicode code-point order for non-ASCII names", () => {
+		const sAccented = makeSkill({ name: "skill-é", description: "shared target keyword" });
+		const sZ = makeSkill({ name: "skill-z", description: "shared target keyword" });
+
+		const hits = searchSkills([sAccented, sZ], { query: "keyword" });
+		expect(hits.map((h) => h.name)).toEqual(["skill-z", "skill-é"]);
+
+		const hitsEmptyQuery = searchSkills([sAccented, sZ], {});
+		expect(hitsEmptyQuery.map((h) => h.name)).toEqual(["skill-z", "skill-é"]);
+	});
+
+	it("breaks ties deterministically for non-ASCII CJK skill names", () => {
+		const sBa = makeSkill({ name: "skill-把", description: "shared target keyword" });
+		const sZhong = makeSkill({ name: "skill-重", description: "shared target keyword" });
+
+		const hits = searchSkills([sZhong, sBa], { query: "keyword" });
+		expect(hits.map((h) => h.name)).toEqual(["skill-把", "skill-重"]);
+	});
+
+	it("filters by CJK tag correctly", () => {
+		const sForm = makeSkill({ name: "form-processor", tags: ["表单"], description: "处理各种表单" });
+		const sOther = makeSkill({ name: "other-tool", tags: ["文档"], description: "处理文档" });
+
+		const hits = searchSkills([sForm, sOther], { tag: "表单" });
+		expect(hits.map((h) => h.name)).toEqual(["form-processor"]);
+	});
+
+	it("discovers skills with Japanese and Korean unsegmented text", () => {
+		const sJp = makeSkill({ name: "jp-form", description: "PDFフォームを自動入力するツール" });
+		const sKr = makeSkill({ name: "kr-doc", description: "문서분석을수행하는도구" });
+
+		const hitsJp = searchSkills([sJp, sKr], { query: "フォーム" });
+		expect(hitsJp.map((h) => h.name)).toEqual(["jp-form"]);
+
+		const hitsKr = searchSkills([sJp, sKr], { query: "문서분석" });
+		expect(hitsKr.map((h) => h.name)).toEqual(["kr-doc"]);
+	});
 });
 
 describe("skill-search tool", () => {
