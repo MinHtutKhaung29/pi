@@ -394,6 +394,23 @@ export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "b
 
 	lines.push("</available_skills>");
 
+	const tagIndex = formatSkillTagIndexForPrompt(skills);
+	if (tagIndex) {
+		lines.push("", tagIndex);
+	}
+
+	return lines.join("\n");
+}
+
+export function formatSkillTagIndexForPrompt(skills: Skill[]): string {
+	const visible = skills.filter((s) => !s.disableModelInvocation && s.tags.length > 0);
+	if (visible.length === 0) return "";
+	const lines = [
+		"<skill_tag_index>",
+		"If the task matches a tag, call skill-search with that tag before doing the work manually.",
+		...visible.map((s) => `${s.name}: ${s.tags.join(", ")}`),
+		"</skill_tag_index>",
+	];
 	return lines.join("\n");
 }
 

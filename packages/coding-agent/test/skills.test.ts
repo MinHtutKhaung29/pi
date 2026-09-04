@@ -2,7 +2,13 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
-import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.ts";
+import {
+	formatSkillTagIndexForPrompt,
+	formatSkillsForPrompt,
+	loadSkills,
+	loadSkillsFromDir,
+	type Skill,
+} from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
 const fixturesDir = resolve(__dirname, "fixtures/skills");
@@ -366,6 +372,42 @@ describe("skills", () => {
 
 			const result = formatSkillsForPrompt(skills);
 			expect(result).toBe("");
+		});
+	});
+
+	describe("tag index", () => {
+		it("emits compact tag map for tagged skills only", () => {
+			const skills: Skill[] = [
+				createTestSkill({
+					name: "pdf-fill",
+					description: "Fill PDFs.",
+					filePath: "/s/pdf-fill/SKILL.md",
+					baseDir: "/s/pdf-fill",
+					tags: ["pdf", "forms"],
+				}),
+				createTestSkill({
+					name: "plain",
+					description: "No tags.",
+					filePath: "/s/plain/SKILL.md",
+					baseDir: "/s/plain",
+				}),
+			];
+			const out = formatSkillTagIndexForPrompt(skills);
+			expect(out).toContain("pdf-fill: pdf, forms");
+			expect(out).not.toContain("plain");
+		});
+
+		it("appends the index to formatSkillsForPrompt output", () => {
+			const skills: Skill[] = [
+				createTestSkill({
+					name: "pdf-fill",
+					description: "Fill PDFs.",
+					filePath: "/s/pdf-fill/SKILL.md",
+					baseDir: "/s/pdf-fill",
+					tags: ["pdf"],
+				}),
+			];
+			expect(formatSkillsForPrompt(skills)).toContain("pdf-fill: pdf");
 		});
 	});
 
