@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
-import type { Skill } from "../skills.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
+import type { Skill } from "../skills.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 export interface SkillSearchOptions {
@@ -17,22 +17,79 @@ export interface SkillHit {
 	tags: string[];
 }
 
+function tokenize(text: string): string[] {
+	return text
+		.toLowerCase()
+		.split(/[^a-z0-9]+/)
+		.filter(Boolean);
+}
+
 export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHit[] {
 	const tag = (opts.tag ?? "").trim().toLowerCase();
 	const query = (opts.query ?? "").trim().toLowerCase();
 	const limit = Math.min(Math.max(opts.limit ?? 5, 1), 10);
+
 	let pool = skills.filter((s) => !s.disableModelInvocation);
 	if (tag) pool = pool.filter((s) => s.tags.includes(tag));
-	if (query) {
-		const words = query.split(/\s+/);
-		pool = pool.filter((s) => {
-			const hay = `${s.name} ${s.description} ${s.tags.join(" ")}`.toLowerCase();
-			return words.every((w) => hay.includes(w));
+
+	if (!query) {
+		return pool
+			.slice()
+			.sort((a, b) => a.name.localeCompare(b.name))
+			.slice(0, limit)
+			.map((s) => ({ name: s.name, description: s.description, filePath: s.filePath, tags: s.tags }));
+	}
+
+	const queryTokens = Array.from(new Set(tokenize(query)));
+
+	const scored: Array<{
+		skill: Skill;
+		exactName: number;
+		exactTag: number;
+		nameTokenMatches: number;
+		descTokenMatches: number;
+	}> = [];
+
+	for (const s of pool) {
+		const exactName = s.name.toLowerCase() === query ? 1 : 0;
+		const exactTag = s.tags.some((t) => t.toLowerCase() === query) ? 1 : 0;
+
+		const nameTokens = new Set(tokenize(s.name));
+		let nameTokenMatches = 0;
+		for (const q of queryTokens) {
+			if (nameTokens.has(q)) nameTokenMatches++;
+		}
+
+		const descTokens = new Set(tokenize(s.description));
+		let descTokenMatches = 0;
+		for (const q of queryTokens) {
+			if (descTokens.has(q)) descTokenMatches++;
+		}
+
+		if (!exactName && !exactTag && nameTokenMatches === 0 && descTokenMatches === 0) {
+			continue;
+		}
+
+		scored.push({
+			skill: s,
+			exactName,
+			exactTag,
+			nameTokenMatches,
+			descTokenMatches,
 		});
 	}
-	return pool
+
+	scored.sort((a, b) => {
+		if (b.exactName !== a.exactName) return b.exactName - a.exactName;
+		if (b.exactTag !== a.exactTag) return b.exactTag - a.exactTag;
+		if (b.nameTokenMatches !== a.nameTokenMatches) return b.nameTokenMatches - a.nameTokenMatches;
+		if (b.descTokenMatches !== a.descTokenMatches) return b.descTokenMatches - a.descTokenMatches;
+		return a.skill.name.localeCompare(b.skill.name);
+	});
+
+	return scored
 		.slice(0, limit)
-		.map((s) => ({ name: s.name, description: s.description, filePath: s.filePath, tags: s.tags }));
+		.map(({ skill: s }) => ({ name: s.name, description: s.description, filePath: s.filePath, tags: s.tags }));
 }
 
 const skillSearchSchema = Type.Object({
@@ -42,8 +99,9 @@ const skillSearchSchema = Type.Object({
 });
 
 function serializeSkillMetadata(value: string | string[]): string {
-	return JSON.stringify(value).replace(/[\u2028\u2029]/g, (character) =>
-		`\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+	return JSON.stringify(value).replace(
+		/[\u2028\u2029]/g,
+		(character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
 	);
 }
 
@@ -79,6 +137,9 @@ export function createSkillSearchToolDefinition(
 	};
 }
 
-export function createSkillSearchTool(cwd: string, options?: SkillSearchToolOptions): AgentTool<typeof skillSearchSchema> {
+export function createSkillSearchTool(
+	cwd: string,
+	options?: SkillSearchToolOptions,
+): AgentTool<typeof skillSearchSchema> {
 	return wrapToolDefinition(createSkillSearchToolDefinition(cwd, options));
 }
