@@ -109,6 +109,28 @@ describe("searchSkills", () => {
 		const cappedHits = searchSkills(skills, { query: "keyword", limit: 20 });
 		expect(cappedHits).toHaveLength(10);
 	});
+
+	it("matches query tokens against normalized tags and ranks tag token score before name and description scores", () => {
+		const sTagTokens = makeSkill({
+			name: "custom-utility",
+			description: "unrelated document processor",
+			tags: ["fill", "pdf"],
+		});
+		const sNameTokens = makeSkill({
+			name: "fill-pdf-tool",
+			description: "unrelated document processor",
+			tags: ["other"],
+		});
+		const sDescTokens = makeSkill({
+			name: "unrelated-tool",
+			description: "can fill pdf forms easily",
+			tags: ["other"],
+		});
+
+		const hits = searchSkills([sDescTokens, sNameTokens, sTagTokens], { query: "fill pdf" });
+
+		expect(hits.map((h) => h.name)).toEqual(["custom-utility", "fill-pdf-tool", "unrelated-tool"]);
+	});
 });
 
 describe("skill-search tool", () => {

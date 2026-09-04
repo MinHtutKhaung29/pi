@@ -46,6 +46,7 @@ export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHi
 		skill: Skill;
 		exactName: number;
 		exactTag: number;
+		tagTokenMatches: number;
 		nameTokenMatches: number;
 		descTokenMatches: number;
 	}> = [];
@@ -53,6 +54,12 @@ export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHi
 	for (const s of pool) {
 		const exactName = s.name.toLowerCase() === query ? 1 : 0;
 		const exactTag = s.tags.some((t) => t.toLowerCase() === query) ? 1 : 0;
+
+		const tagTokens = new Set(s.tags.flatMap((t) => tokenize(t)));
+		let tagTokenMatches = 0;
+		for (const q of queryTokens) {
+			if (tagTokens.has(q)) tagTokenMatches++;
+		}
 
 		const nameTokens = new Set(tokenize(s.name));
 		let nameTokenMatches = 0;
@@ -66,7 +73,7 @@ export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHi
 			if (descTokens.has(q)) descTokenMatches++;
 		}
 
-		if (!exactName && !exactTag && nameTokenMatches === 0 && descTokenMatches === 0) {
+		if (!exactName && !exactTag && tagTokenMatches === 0 && nameTokenMatches === 0 && descTokenMatches === 0) {
 			continue;
 		}
 
@@ -74,6 +81,7 @@ export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHi
 			skill: s,
 			exactName,
 			exactTag,
+			tagTokenMatches,
 			nameTokenMatches,
 			descTokenMatches,
 		});
@@ -82,6 +90,7 @@ export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHi
 	scored.sort((a, b) => {
 		if (b.exactName !== a.exactName) return b.exactName - a.exactName;
 		if (b.exactTag !== a.exactTag) return b.exactTag - a.exactTag;
+		if (b.tagTokenMatches !== a.tagTokenMatches) return b.tagTokenMatches - a.tagTokenMatches;
 		if (b.nameTokenMatches !== a.nameTokenMatches) return b.nameTokenMatches - a.nameTokenMatches;
 		if (b.descTokenMatches !== a.descTokenMatches) return b.descTokenMatches - a.descTokenMatches;
 		return a.skill.name.localeCompare(b.skill.name);

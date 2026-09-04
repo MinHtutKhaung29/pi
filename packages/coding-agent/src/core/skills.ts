@@ -424,15 +424,31 @@ export function formatSkillsForPrompt(
 }
 
 export function formatSkillTagIndexForPrompt(skills: Skill[]): string {
-	const visible = skills.filter((s) => !s.disableModelInvocation && s.tags.length > 0);
-	if (visible.length === 0) return "";
+	const entries: string[] = [];
+	for (const skill of skills) {
+		if (skill.disableModelInvocation) continue;
+		const safeTags = skill.tags.map(escapePromptTagIndexText).filter(Boolean);
+		if (safeTags.length === 0) continue;
+		const safeName = escapePromptTagIndexText(skill.name);
+		if (!safeName) continue;
+		entries.push(`${safeName}: ${safeTags.join(", ")}`);
+	}
+	if (entries.length === 0) return "";
 	const lines = [
 		"<skill_tag_index>",
 		"If the task matches a tag, call skill-search with that tag before doing the work manually.",
-		...visible.map((s) => `${s.name}: ${s.tags.join(", ")}`),
+		...entries,
 		"</skill_tag_index>",
 	];
 	return lines.join("\n");
+}
+
+function escapePromptTagIndexText(str: string): string {
+	return escapeXml(str)
+		.replace(/\r\n/g, "\\n")
+		.replace(/\r/g, "\\r")
+		.replace(/\n/g, "\\n")
+		.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 function escapeXml(str: string): string {
