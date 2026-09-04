@@ -38,8 +38,14 @@ export function searchSkills(skills: Skill[], opts: SkillSearchOptions): SkillHi
 const skillSearchSchema = Type.Object({
 	query: Type.Optional(Type.String({ description: "Keywords, e.g. 'fill pdf form'" })),
 	tag: Type.Optional(Type.String({ description: "Tag filter, e.g. 'pdf'. See <skill_tag_index>." })),
-	limit: Type.Optional(Type.Number({ description: "Max hits (default 5, max 10)" })),
+	limit: Type.Optional(Type.Integer({ description: "Max hits (default 5, max 10)", minimum: 1, maximum: 10 })),
 });
+
+function serializeSkillMetadata(value: string | string[]): string {
+	return JSON.stringify(value).replace(/[\u2028\u2029]/g, (character) =>
+		`\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+	);
+}
 
 export interface SkillSearchToolOptions {
 	getSkills?: () => Skill[];
@@ -63,7 +69,10 @@ export function createSkillSearchToolDefinition(
 				return { content: [{ type: "text", text: "No matching skills found" }], details: undefined };
 			}
 			const text = hits
-				.map((h) => `- ${h.name}: ${h.description} (file: ${h.filePath}, tags: ${h.tags.join(", ") || "none"})`)
+				.map(
+					(h) =>
+						`- ${serializeSkillMetadata(h.name)}: ${serializeSkillMetadata(h.description)} (file: ${serializeSkillMetadata(h.filePath)}, tags: ${h.tags.length > 0 ? serializeSkillMetadata(h.tags) : "none"})`,
+				)
 				.join("\n");
 			return { content: [{ type: "text", text }], details: undefined };
 		},
