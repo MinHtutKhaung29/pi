@@ -1,9 +1,12 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentTool } from "@earendil-works/pi-agent";
 import { getModel } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createExtensionRuntime } from "../src/core/extensions/loader.ts";
+import { createEventBus } from "../src/core/event-bus.ts";
+import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { type CreateAgentSessionOptions, createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -236,6 +239,278 @@ describe("skill-search conditional activation and registration", () => {
 
 			expect(harness.session.getAllTools().map((t) => t.name)).toContain("skill-search");
 			expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+			harness.cleanup();
+		});
+	});
+
+	describe("dynamic discovery, reload, and explicit exclusions", () => {
+		async function createDiscoveringSession(
+			options: {
+				initialSkills?: Skill[];
+				discoveredSkills?: Skill[];
+				sessionOptions?: Pick<CreateAgentSessionOptions, "tools" | "excludeTools" | "noTools">;
+				settingsManager?: SettingsManager;
+				baseToolsOverride?: Record<string, AgentTool>;
+			} = {},
+		) {
+			let currentSkills = [...(options.initialSkills ?? [])];
+			const settingsManager = options.settingsManager ?? SettingsManager.inMemory();
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("resources_discover", () => ({
+						skillPaths: (options.discoveredSkills ?? []).map((s) => s.filePath),
+					}));
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+			);
+
+			const resourceLoader: ResourceLoader = {
+				getExtensions: () => ({
+					extensions: [extension],
+					errors: [],
+					runtime,
+				}),
+				getSkills: () => ({ skills: currentSkills, diagnostics: [] }),
+				getPrompts: () => ({ prompts: [], diagnostics: [] }),
+				getThemes: () => ({ themes: [], diagnostics: [] }),
+				getAgentsFiles: () => ({ agentsFiles: [] }),
+				getSystemPrompt: () => undefined,
+				getSystemPromptSource: () => undefined,
+				getAppendSystemPrompt: () => [],
+				getAppendSystemPromptSources: () => [],
+				extendResources: () => {
+					currentSkills = [...currentSkills, ...(options.discoveredSkills ?? [])];
+				},
+				reload: async () => {},
+			};
+
+			const session = (
+				await createAgentSession({
+					cwd: tempDir,
+					agentDir,
+					model: getModel("anthropic", "claude-sonnet-4-5")!,
+					settingsManager,
+					sessionManager: SessionManager.inMemory(tempDir),
+					resourceLoader,
+					baseToolsOverride: options.baseToolsOverride,
+					...options.sessionOptions,
+				})
+			).session;
+
+			return {
+				session,
+				bind: async () => {
+					await session.bindExtensions({
+						shutdownHandler: () => {},
+					});
+				},
+			};
+		}
+
+		it("Q1: resources_discover adds model-invocable skill: registers and activates, prompt is lazy, executing finds it", async () => {
+			const discovered = createTestSkill({ name: "pdf-fill", disableModelInvocation: false });
+			const { session, bind } = await createDiscoveringSession({
+				initialSkills: [],
+				discoveredSkills: [discovered],
+			});
+
+			expect(session.getAllTools().map((t) => t.name)).not.toContain("skill-search");
+			expect(session.getActiveToolNames()).not.toContain("skill-search");
+
+			await bind();
+
+			expect(session.getAllTools().map((t) => t.name)).toContain("skill-search");
+			expect(session.getActiveToolNames()).toContain("skill-search");
+			expect(session.systemPrompt).toContain("Use skill-search to find relevant skills");
+
+			const tool = session.agent.state.tools.find((t) => t.name === "skill-search")!;
+			const result = await tool.execute("call-1", { query: "pdf" });
+			expect((result.content[0] as { type: string; text: string }).text).toContain("pdf-fill");
+
+			session.dispose();
+		});
+
+		it("Q2: resources_discover with tools: ['read']: stays unregistered/disabled and falls back to full catalog", async () => {
+			const discovered = createTestSkill({ name: "pdf-fill", disableModelInvocation: false });
+			const { session, bind } = await createDiscoveringSession({
+				initialSkills: [],
+				discoveredSkills: [discovered],
+				sessionOptions: { tools: ["read"] },
+			});
+
+			await bind();
+
+			expect(session.getAllTools().map((t) => t.name)).not.toContain("skill-search");
+			expect(session.getActiveToolNames()).toEqual(["read"]);
+			expect(session.systemPrompt).toContain("<available_skills>");
+			expect(session.systemPrompt).not.toContain("Use skill-search to find relevant skills");
+
+			session.dispose();
+		});
+
+		it("Q3: resources_discover with excludeTools: ['skill-search']: stays unregistered/disabled and falls back to full catalog", async () => {
+			const discovered = createTestSkill({ name: "pdf-fill", disableModelInvocation: false });
+			const { session, bind } = await createDiscoveringSession({
+				initialSkills: [],
+				discoveredSkills: [discovered],
+				sessionOptions: { excludeTools: ["skill-search"] },
+			});
+
+			await bind();
+
+			expect(session.getAllTools().map((t) => t.name)).not.toContain("skill-search");
+			expect(session.getActiveToolNames()).not.toContain("skill-search");
+			expect(session.systemPrompt).toContain("<available_skills>");
+			expect(session.systemPrompt).not.toContain("Use skill-search to find relevant skills");
+
+			session.dispose();
+		});
+
+		it("Q4: resources_discover with tools: ['read', 'skill-search'] and hidden skill: registered and active by explicit policy", async () => {
+			const discovered = createTestSkill({ name: "hidden", disableModelInvocation: true });
+			const { session, bind } = await createDiscoveringSession({
+				initialSkills: [],
+				discoveredSkills: [discovered],
+				sessionOptions: { tools: ["read", "skill-search"] },
+			});
+
+			await bind();
+
+			expect(session.getAllTools().map((t) => t.name)).toContain("skill-search");
+			expect(session.getActiveToolNames()).toEqual(["read", "skill-search"]);
+
+			session.dispose();
+		});
+
+		it("Q5: resources_discover with defaultTools: ['read']: does not auto-add search", async () => {
+			const discovered = createTestSkill({ name: "pdf-fill", disableModelInvocation: false });
+			const settingsManager = SettingsManager.inMemory({ defaultTools: ["read"] });
+
+			const { session, bind } = await createDiscoveringSession({
+				initialSkills: [],
+				discoveredSkills: [discovered],
+				settingsManager,
+			});
+
+			await bind();
+
+			expect(session.getActiveToolNames()).toEqual(["read"]);
+			expect(session.systemPrompt).toContain("<available_skills>");
+			expect(session.systemPrompt).not.toContain("Use skill-search to find relevant skills");
+
+			session.dispose();
+		});
+
+		it("Q6: reload from no skills to one visible skill activates search; reload back to no skills unregisters it", async () => {
+			let currentSkills: Skill[] = [];
+			const resourceLoader: ResourceLoader = {
+				getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+				getSkills: () => ({ skills: currentSkills, diagnostics: [] }),
+				getPrompts: () => ({ prompts: [], diagnostics: [] }),
+				getThemes: () => ({ themes: [], diagnostics: [] }),
+				getAgentsFiles: () => ({ agentsFiles: [] }),
+				getSystemPrompt: () => undefined,
+				getSystemPromptSource: () => undefined,
+				getAppendSystemPrompt: () => [],
+				getAppendSystemPromptSources: () => [],
+				extendResources: () => {},
+				reload: async () => {},
+			};
+
+			const session = (
+				await createAgentSession({
+					cwd: tempDir,
+					agentDir,
+					model: getModel("anthropic", "claude-sonnet-4-5")!,
+					settingsManager: SettingsManager.inMemory(),
+					sessionManager: SessionManager.inMemory(tempDir),
+					resourceLoader,
+				})
+			).session;
+
+			expect(session.getAllTools().map((t) => t.name)).not.toContain("skill-search");
+			expect(session.getActiveToolNames()).not.toContain("skill-search");
+
+			// Reload with one visible skill
+			currentSkills = [createTestSkill({ name: "pdf-fill", disableModelInvocation: false })];
+			await session.reload();
+
+			expect(session.getAllTools().map((t) => t.name)).toContain("skill-search");
+			expect(session.getActiveToolNames()).toContain("skill-search");
+			expect(session.systemPrompt).toContain("Use skill-search to find relevant skills");
+
+			// Reload back to no skills
+			currentSkills = [];
+			await session.reload();
+
+			expect(session.getAllTools().map((t) => t.name)).not.toContain("skill-search");
+			expect(session.getActiveToolNames()).not.toContain("skill-search");
+			expect(session.systemPrompt).not.toContain("Use skill-search to find relevant skills");
+
+			session.dispose();
+		});
+
+		it("Q7: manual disable preserved across reload when skills remain present", async () => {
+			const currentSkills: Skill[] = [createTestSkill({ name: "pdf-fill", disableModelInvocation: false })];
+			const resourceLoader: ResourceLoader = {
+				getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+				getSkills: () => ({ skills: currentSkills, diagnostics: [] }),
+				getPrompts: () => ({ prompts: [], diagnostics: [] }),
+				getThemes: () => ({ themes: [], diagnostics: [] }),
+				getAgentsFiles: () => ({ agentsFiles: [] }),
+				getSystemPrompt: () => undefined,
+				getSystemPromptSource: () => undefined,
+				getAppendSystemPrompt: () => [],
+				getAppendSystemPromptSources: () => [],
+				extendResources: () => {},
+				reload: async () => {},
+			};
+
+			const session = (
+				await createAgentSession({
+					cwd: tempDir,
+					agentDir,
+					model: getModel("anthropic", "claude-sonnet-4-5")!,
+					settingsManager: SettingsManager.inMemory(),
+					sessionManager: SessionManager.inMemory(tempDir),
+					resourceLoader,
+				})
+			).session;
+
+			expect(session.getActiveToolNames()).toContain("skill-search");
+
+			// User manually disables skill-search
+			session.setActiveToolsByName(["read", "bash", "edit", "write"]);
+			expect(session.getActiveToolNames()).not.toContain("skill-search");
+
+			// Reload while skills still present
+			await session.reload();
+
+			expect(session.getAllTools().map((t) => t.name)).toContain("skill-search");
+			expect(session.getActiveToolNames()).not.toContain("skill-search");
+
+			session.dispose();
+		});
+
+		it("Q8: baseToolsOverride without skill-search never synthesizes it", async () => {
+			const dummyTool: AgentTool = {
+				name: "dummy",
+				description: "A dummy tool",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [] }),
+			};
+
+			const harness = await createHarness({
+				resourceLoader: createMockResourceLoader([createTestSkill()]),
+				tools: [dummyTool],
+			});
+
+			expect(harness.session.getAllTools().map((t) => t.name)).not.toContain("skill-search");
+			expect(harness.session.getActiveToolNames()).toEqual(["dummy"]);
+
 			harness.cleanup();
 		});
 	});

@@ -261,6 +261,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
+
+	let skillSearchActivation: "auto" | "enabled" | "disabled";
+	if (excludedToolNameSet?.has("skill-search") || options.noTools) {
+		skillSearchActivation = "disabled";
+	} else if (options.tools) {
+		skillSearchActivation = options.tools.includes("skill-search") ? "enabled" : "disabled";
+	} else if (configuredDefaultToolNames) {
+		skillSearchActivation = configuredDefaultToolNames.includes("skill-search") ? "enabled" : "disabled";
+	} else {
+		skillSearchActivation = "auto";
+	}
+
 	const initialActiveToolNames = (
 		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? defaultActiveToolNames))
 	).filter((name) => !excludedToolNameSet?.has(name));
@@ -400,6 +412,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		initialActiveToolNames,
 		allowedToolNames,
 		excludedToolNames,
+		skillSearchActivation,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});

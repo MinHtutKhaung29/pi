@@ -217,6 +217,14 @@ export interface AgentSessionConfig {
 	/** Optional denylist of tool names. When provided, these tool names are not exposed. */
 	excludedToolNames?: string[];
 	/**
+	 * Skill search activation policy.
+	 * - "auto": activated when model-invocable skills are available.
+	 * - "enabled": explicitly requested, active whenever any skills exist.
+	 * - "disabled": explicitly disabled, never active.
+	 * Default: "auto"
+	 */
+	skillSearchActivation?: "auto" | "enabled" | "disabled";
+	/**
 	 * Override base tools (useful for custom runtimes).
 	 *
 	 * These are synthesized into minimal ToolDefinitions internally so AgentSession can keep
@@ -358,6 +366,7 @@ export class AgentSession {
 	private _initialActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
 	private _excludedToolNames?: Set<string>;
+	private _skillSearchActivation: "auto" | "enabled" | "disabled";
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
@@ -394,6 +403,7 @@ export class AgentSession {
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
+		this._skillSearchActivation = config.skillSearchActivation ?? "auto";
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 
@@ -2487,9 +2497,13 @@ export class AgentSession {
 			themePaths: this.buildExtensionResourcePaths(themePaths),
 		};
 
+		const wasRegistered = this._toolRegistry.has("skill-search");
+		const wasActive = this.getActiveToolNames().includes("skill-search");
+
 		this._resourceLoader.extendResources(extensionPaths);
+		this._syncSkillSearchAfterResourceChange({ wasRegistered, wasActive });
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -2673,8 +2687,11 @@ export class AgentSession {
 		const previousActiveToolNames = this.getActiveToolNames();
 		const allowedToolNames = this._allowedToolNames;
 		const excludedToolNames = this._excludedToolNames;
+		const hasSkills = this._resourceLoader.getSkills().skills.length > 0;
 		const isAllowedTool = (name: string): boolean =>
-			(!allowedToolNames || allowedToolNames.has(name)) && !excludedToolNames?.has(name);
+			(!allowedToolNames || allowedToolNames.has(name)) &&
+			!excludedToolNames?.has(name) &&
+			(name !== "skill-search" || hasSkills);
 
 		const registeredTools = this._extensionRunner.getAllRegisteredTools();
 		const allCustomTools = [
@@ -2752,6 +2769,7 @@ export class AgentSession {
 			}
 		} else if (!options?.activeToolNames) {
 			for (const toolName of this._toolRegistry.keys()) {
+				if (toolName === "skill-search") continue;
 				if (!previousRegistryNames.has(toolName)) {
 					nextActiveToolNames.push(toolName);
 				}
@@ -2759,6 +2777,45 @@ export class AgentSession {
 		}
 
 		this.setActiveToolsByName([...new Set(nextActiveToolNames)]);
+	}
+
+	private _syncSkillSearchAfterResourceChange(options?: { wasRegistered?: boolean; wasActive?: boolean }): void {
+		if (!this._baseToolDefinitions.has("skill-search")) {
+			return;
+		}
+
+		const loadedSkills = this._resourceLoader.getSkills().skills;
+		const hasAnySkills = loadedSkills.length > 0;
+		const hasModelInvocableSkills = loadedSkills.some((skill) => !skill.disableModelInvocation);
+
+		const currentActive = this.getActiveToolNames();
+		let shouldBeActive: boolean;
+
+		if (!hasAnySkills) {
+			shouldBeActive = false;
+		} else if (this._skillSearchActivation === "disabled") {
+			shouldBeActive = false;
+		} else if (this._skillSearchActivation === "enabled") {
+			shouldBeActive = true;
+		} else {
+			if (!hasModelInvocableSkills) {
+				shouldBeActive = false;
+			} else if (options?.wasRegistered === false) {
+				shouldBeActive = true;
+			} else if (options?.wasRegistered === true) {
+				shouldBeActive = options.wasActive ?? false;
+			} else {
+				shouldBeActive = currentActive.includes("skill-search");
+			}
+		}
+
+		const nextActiveToolNames = shouldBeActive
+			? currentActive.includes("skill-search")
+				? currentActive
+				: [...currentActive, "skill-search"]
+			: currentActive.filter((name) => name !== "skill-search");
+
+		this._refreshToolRegistry({ activeToolNames: nextActiveToolNames });
 	}
 
 	private _buildRuntime(options: {
@@ -2789,9 +2846,6 @@ export class AgentSession {
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
 		);
-		if (!hasSkills) {
-			this._baseToolDefinitions.delete("skill-search");
-		}
 
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
@@ -2813,9 +2867,15 @@ export class AgentSession {
 		this._bindExtensionCore(this._extensionRunner);
 		this._applyExtensionBindings(this._extensionRunner);
 
+		const shouldIncludeSkillSearchByDefault =
+			!this._baseToolsOverride &&
+			(this._skillSearchActivation === "enabled"
+				? hasSkills
+				: this._skillSearchActivation === "auto" && hasModelInvocableSkills);
+
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: hasModelInvocableSkills
+			: shouldIncludeSkillSearchByDefault
 				? ["read", "bash", "edit", "write", "skill-search"]
 				: ["read", "bash", "edit", "write"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
@@ -2826,6 +2886,8 @@ export class AgentSession {
 	}
 
 	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
+		const wasRegistered = this._toolRegistry.has("skill-search");
+		const wasActive = this.getActiveToolNames().includes("skill-search");
 		const oldRunner = this._extensionRunner;
 		const previousFlagValues = oldRunner.getFlagValues();
 		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
@@ -2839,6 +2901,7 @@ export class AgentSession {
 			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
 		});
+		this._syncSkillSearchAfterResourceChange({ wasRegistered, wasActive });
 
 		const hasBindings =
 			this._extensionUIContext ||

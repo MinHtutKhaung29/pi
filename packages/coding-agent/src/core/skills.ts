@@ -448,6 +448,8 @@ function escapePromptTagIndexText(str: string): string {
 		.replace(/\r\n/g, "\\n")
 		.replace(/\r/g, "\\r")
 		.replace(/\n/g, "\\n")
+		.replace(/\u2028/g, "\\u2028")
+		.replace(/\u2029/g, "\\u2029")
 		.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
