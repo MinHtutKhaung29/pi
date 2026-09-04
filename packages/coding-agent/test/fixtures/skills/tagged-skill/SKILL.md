@@ -2,8 +2,10 @@
 name: tagged-skill
 description: A skill with tags for testing.
 tags:
+  - Calendar
+  - " read-only "
   - calendar
-  - read-only
+  - "bad tag!"
 ---
 
 # Tagged Skill

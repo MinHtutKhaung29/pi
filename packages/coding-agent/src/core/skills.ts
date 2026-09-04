@@ -67,6 +67,7 @@ function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
 export interface SkillFrontmatter {
 	name?: string;
 	description?: string;
+	tags?: unknown;
 	"disable-model-invocation"?: boolean;
 	[key: string]: unknown;
 }
@@ -79,6 +80,18 @@ export interface Skill {
 	sourceInfo: SourceInfo;
 	disableModelInvocation: boolean;
 	tags: string[];
+}
+
+export function normalizeSkillTags(input: unknown): string[] {
+	if (!Array.isArray(input)) return [];
+	const out: string[] = [];
+	for (const raw of input) {
+		if (typeof raw !== "string") continue;
+		const t = raw.trim().toLowerCase();
+		if (!t || !/^[a-z0-9-]+$/.test(t) || out.includes(t)) continue;
+		out.push(t);
+	}
+	return out.slice(0, 8);
 }
 
 export interface LoadSkillsResult {
@@ -332,11 +345,6 @@ function loadSkillFromFile(
 		return { skill: null, diagnostics };
 	}
 
-	const rawTags = frontmatter["tags"];
-	const tags: string[] = Array.isArray(rawTags)
-		? (rawTags as unknown[]).map((tag) => String(tag))
-		: [];
-
 	return {
 		skill: {
 			name,
@@ -345,7 +353,7 @@ function loadSkillFromFile(
 			baseDir: skillDir,
 			sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
 			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
-			tags,
+			tags: normalizeSkillTags(frontmatter.tags),
 		},
 		diagnostics,
 	};

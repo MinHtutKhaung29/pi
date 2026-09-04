@@ -233,6 +233,14 @@ describe("skills", () => {
 			expect(skills[0].tags).toEqual(["calendar", "read-only"]);
 			expect(diagnostics).toHaveLength(0);
 		});
+
+		it("defaults to empty tags when frontmatter has none", () => {
+			const { skills } = loadSkillsFromDir({
+				dir: join(fixturesDir, "valid-skill"),
+				source: "test",
+			});
+			expect(skills[0].tags).toEqual([]);
+		});
 	});
 
 	describe("formatSkillsForPrompt", () => {
