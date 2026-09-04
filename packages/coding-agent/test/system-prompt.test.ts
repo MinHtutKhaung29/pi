@@ -167,5 +167,54 @@ describe("buildSystemPrompt", () => {
 
 			expect(prompt).not.toContain("<available_skills>");
 		});
+
+		test("lazy mode omits full catalog and includes compact discovery when skillSearchEnabled is true", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read"],
+				contextFiles: [],
+				skills: [
+					{
+						...testSkill,
+						tags: ["test", "demo"],
+					},
+				],
+				cwd: process.cwd(),
+				skillSearchEnabled: true,
+			});
+
+			expect(prompt).not.toContain("<available_skills>");
+			expect(prompt).not.toContain("A test skill.");
+			expect(prompt).toContain("Use skill-search to find relevant skills");
+			expect(prompt).toContain("<skill_tag_index>");
+			expect(prompt).toContain("test-skill: test, demo");
+		});
+
+		test("preserves full catalog when skillSearchEnabled is false even if skill-search tool is selected", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "skill-search"],
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+				skillSearchEnabled: false,
+			});
+
+			expect(prompt).toContain("<available_skills>");
+			expect(prompt).toContain("<name>test-skill</name>");
+			expect(prompt).toContain("<description>A test skill.</description>");
+		});
+
+		test("derives lazy mode when skillSearchEnabled is undefined and skill-search is in selectedTools", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "skill-search"],
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+				skillSearchEnabled: undefined,
+			});
+
+			expect(prompt).not.toContain("<available_skills>");
+			expect(prompt).not.toContain("A test skill.");
+			expect(prompt).toContain("Use skill-search to find relevant skills");
+		});
 	});
 });

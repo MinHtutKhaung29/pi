@@ -3,8 +3,8 @@ import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
 import {
-	formatSkillTagIndexForPrompt,
 	formatSkillsForPrompt,
+	formatSkillTagIndexForPrompt,
 	loadSkills,
 	loadSkillsFromDir,
 	type Skill,
@@ -372,6 +372,100 @@ describe("skills", () => {
 
 			const result = formatSkillsForPrompt(skills);
 			expect(result).toBe("");
+		});
+
+		describe("lazy mode (skillSearchEnabled)", () => {
+			it("omits <available_skills> and full descriptions while retaining compact discovery instruction and tag vocabulary", () => {
+				const skills: Skill[] = [
+					createTestSkill({
+						name: "pdf-fill",
+						description: "Fill PDF forms with detailed instructions.",
+						filePath: "/path/to/pdf-fill/SKILL.md",
+						baseDir: "/path/to/pdf-fill",
+						tags: ["pdf", "forms"],
+					}),
+					createTestSkill({
+						name: "git-review",
+						description: "Review pull requests and diffs thoroughly.",
+						filePath: "/path/to/git-review/SKILL.md",
+						baseDir: "/path/to/git-review",
+						tags: ["git"],
+					}),
+				];
+
+				const result = formatSkillsForPrompt(skills, "read", true);
+
+				expect(result).not.toContain("<available_skills>");
+				expect(result).not.toContain("</available_skills>");
+				expect(result).not.toContain("<skill>");
+				expect(result).not.toContain("Fill PDF forms with detailed instructions.");
+				expect(result).not.toContain("Review pull requests and diffs thoroughly.");
+				expect(result).toContain(
+					"Use skill-search to find relevant skills, and the read tool to load a skill's file.",
+				);
+				expect(result).toContain("When a skill file references a relative path");
+				expect(result).toContain("<skill_tag_index>");
+				expect(result).toContain("pdf-fill: pdf, forms");
+				expect(result).toContain("git-review: git");
+				expect(result).toContain("</skill_tag_index>");
+			});
+
+			it("uses bash in compact discovery instruction when fileReadTool is bash", () => {
+				const skills: Skill[] = [
+					createTestSkill({
+						name: "pdf-fill",
+						description: "Fill PDF forms.",
+						filePath: "/path/to/pdf-fill/SKILL.md",
+						baseDir: "/path/to/pdf-fill",
+						tags: ["pdf"],
+					}),
+				];
+
+				const result = formatSkillsForPrompt(skills, "bash", true);
+
+				expect(result).not.toContain("<available_skills>");
+				expect(result).not.toContain("Fill PDF forms.");
+				expect(result).toContain("Use skill-search to find relevant skills, and bash to load a skill's file.");
+			});
+
+			it("preserves full catalog output when skillSearchEnabled is false or omitted", () => {
+				const skills: Skill[] = [
+					createTestSkill({
+						name: "pdf-fill",
+						description: "Fill PDF forms with detailed instructions.",
+						filePath: "/path/to/pdf-fill/SKILL.md",
+						baseDir: "/path/to/pdf-fill",
+						tags: ["pdf", "forms"],
+					}),
+				];
+
+				const defaultResult = formatSkillsForPrompt(skills, "read");
+				const explicitDisabledResult = formatSkillsForPrompt(skills, "read", false);
+
+				expect(defaultResult).toBe(explicitDisabledResult);
+				expect(defaultResult).toContain("<available_skills>");
+				expect(defaultResult).toContain("<description>Fill PDF forms with detailed instructions.</description>");
+				expect(defaultResult).toContain("<location>/path/to/pdf-fill/SKILL.md</location>");
+				expect(defaultResult).toContain(
+					"Use the read tool to load a skill's file when the task matches its description.",
+				);
+				expect(defaultResult).toContain("<skill_tag_index>");
+				expect(defaultResult).toContain("pdf-fill: pdf, forms");
+			});
+
+			it("returns empty string in lazy mode when visible skills is empty", () => {
+				const skills: Skill[] = [
+					createTestSkill({
+						name: "hidden",
+						description: "Hidden.",
+						filePath: "/path/hidden/SKILL.md",
+						baseDir: "/path/hidden",
+						disableModelInvocation: true,
+					}),
+				];
+
+				expect(formatSkillsForPrompt(skills, "read", true)).toBe("");
+			});
 		});
 	});
 

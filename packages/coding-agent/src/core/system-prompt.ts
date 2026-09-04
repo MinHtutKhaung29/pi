@@ -22,6 +22,8 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/** Whether skill-search is enabled, emitting compact skill discovery instead of the full catalog. */
+	skillSearchEnabled?: boolean;
 }
 
 /** Build the system prompt with tools, guidelines, and context */
@@ -35,6 +37,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		cwd,
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
+		skillSearchEnabled: providedSkillSearchEnabled,
 	} = options;
 	const promptCwd = cwd.replace(/\\/g, "/");
 
@@ -44,6 +47,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const skills = providedSkills ?? [];
 	const tools = selectedTools || ["read", "bash", "edit", "write"];
 	const skillFileReadTool = (["read", "bash"] as const).find((tool) => tools.includes(tool));
+	const skillSearchEnabled = providedSkillSearchEnabled ?? tools.includes("skill-search");
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -64,7 +68,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 		// Append skills when a tool capable of reading their files is available.
 		if (skillFileReadTool && skills.length > 0) {
-			prompt += formatSkillsForPrompt(skills, skillFileReadTool);
+			prompt += formatSkillsForPrompt(skills, skillFileReadTool, skillSearchEnabled);
 		}
 
 		prompt += `\nCurrent working directory: ${promptCwd}\n`;
@@ -159,7 +163,7 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 
 	// Append skills when a tool capable of reading their files is available.
 	if (skillFileReadTool && skills.length > 0) {
-		prompt += formatSkillsForPrompt(skills, skillFileReadTool);
+		prompt += formatSkillsForPrompt(skills, skillFileReadTool, skillSearchEnabled);
 	}
 
 	prompt += `\nCurrent working directory: ${promptCwd}`;
