@@ -2779,6 +2779,7 @@ export class AgentSession {
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					skillSearch: { getSkills: () => this._resourceLoader.getSkills().skills },
 				});
 
 		this._baseToolDefinitions = new Map(
