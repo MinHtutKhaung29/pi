@@ -14,6 +14,7 @@ function createTestSkill(options: {
 	filePath: string;
 	baseDir: string;
 	disableModelInvocation?: boolean;
+	tags?: string[];
 	source?: string;
 }): Skill {
 	return {
@@ -23,6 +24,7 @@ function createTestSkill(options: {
 		baseDir: options.baseDir,
 		sourceInfo: createSyntheticSourceInfo(options.filePath, { source: options.source ?? "test" }),
 		disableModelInvocation: options.disableModelInvocation ?? false,
+		tags: options.tags ?? [],
 	};
 }
 
@@ -219,6 +221,18 @@ describe("skills", () => {
 			expect(skills).toHaveLength(1);
 			expect(skills[0].disableModelInvocation).toBe(false);
 		});
+
+		it("should parse tags from frontmatter", () => {
+			const { skills, diagnostics } = loadSkillsFromDir({
+				dir: join(fixturesDir, "tagged-skill"),
+				source: "test",
+			});
+
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("tagged-skill");
+			expect(skills[0].tags).toEqual(["calendar", "read-only"]);
+			expect(diagnostics).toHaveLength(0);
+		});
 	});
 
 	describe("formatSkillsForPrompt", () => {
@@ -319,6 +333,7 @@ describe("skills", () => {
 					filePath: "/path/hidden/SKILL.md",
 					baseDir: "/path/hidden",
 					disableModelInvocation: true,
+					tags: [],
 				}),
 			];
 
@@ -337,6 +352,7 @@ describe("skills", () => {
 					filePath: "/path/hidden/SKILL.md",
 					baseDir: "/path/hidden",
 					disableModelInvocation: true,
+					tags: [],
 				}),
 			];
 

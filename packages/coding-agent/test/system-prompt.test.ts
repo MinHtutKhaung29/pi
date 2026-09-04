@@ -10,6 +10,7 @@ const testSkill: Skill = {
 	baseDir: "/skills/test-skill",
 	sourceInfo: createSyntheticSourceInfo("/skills/test-skill/SKILL.md", { source: "test" }),
 	disableModelInvocation: false,
+	tags: [],
 };
 
 describe("buildSystemPrompt", () => {

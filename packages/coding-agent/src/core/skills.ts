@@ -78,6 +78,7 @@ export interface Skill {
 	baseDir: string;
 	sourceInfo: SourceInfo;
 	disableModelInvocation: boolean;
+	tags: string[];
 }
 
 export interface LoadSkillsResult {
@@ -331,6 +332,11 @@ function loadSkillFromFile(
 		return { skill: null, diagnostics };
 	}
 
+	const rawTags = frontmatter["tags"];
+	const tags: string[] = Array.isArray(rawTags)
+		? (rawTags as unknown[]).map((tag) => String(tag))
+		: [];
+
 	return {
 		skill: {
 			name,
@@ -339,6 +345,7 @@ function loadSkillFromFile(
 			baseDir: skillDir,
 			sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
 			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+			tags,
 		},
 		diagnostics,
 	};
